@@ -5,12 +5,15 @@ import uuid
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from utils import generate_card, get_sound, sync_to_ankiweb, parse_card, get_image_url
+from utils import get_sound, sync_to_ankiweb, parse_card, get_image_url, is_chinese_word
+
+from handlers.ai_answer.groq_client import groq
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 load_dotenv()
+
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
@@ -52,8 +55,9 @@ async def handle_message(message: Message) -> None:
     await bot.send_chat_action(message.chat.id, "typing")
     
     loop = asyncio.get_event_loop()
+
     try:
-        card_text = await loop.run_in_executor(None, generate_card, word)
+        card_text = await loop.run_in_executor(None, groq.ask, word)
     except Exception as e:
         logger.error(f"Ошибка Groq API: {e}")
         await message.answer("❌ Ошибка при генерации текста. Проверьте VPN или API ключ.")
@@ -81,8 +85,15 @@ async def handle_message(message: Message) -> None:
     try:
         parsed_data = parse_card(card_text)
         image_url = await get_image_url(parsed_data["image_prompt"], parsed_data["front"])
+
+        # Для китайских слов добавляем пиньинь в превью
+        if parsed_data.get("is_chinese") and parsed_data.get("pinyin"):
+            caption = f"🈶 {parsed_data['front']}  [{parsed_data['pinyin']}]\n\n{card_text}"
+        else:
+            caption = card_text
+
         await bot.send_chat_action(message.chat.id, "upload_photo")
-        await message.answer_photo(image_url, caption=card_text, reply_markup=keyboard)
+        await message.answer_photo(image_url, caption=caption, reply_markup=keyboard)
     except Exception as e:
         logger.error(f"Не удалось отправить фото в ТГ: {e}")
         await message.answer(card_text, reply_markup=keyboard)
